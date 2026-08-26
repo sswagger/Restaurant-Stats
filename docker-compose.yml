@@ -1,0 +1,36 @@
+services:
+  # MySQL database service
+  mysql:
+    image: mysql:8.0
+    container_name: restaurant-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: statsDb
+    ports:
+      - "3306:3306"
+    volumes:
+      - db-data:/var/lib/mysql
+    restart: unless-stopped
+
+  # MCP Server for LLM integration
+  db-access-mcp:
+    build:
+      context: .
+      dockerfile: .docker/Dockerfile
+    container_name: restaurant-mcp
+    command: ["python", "-m", "app", "--port", "8000"]
+    ports:
+      - "8000:8000"  # MCP HTTP JSON-RPC endpoint (host:container)
+    env_file:
+      - .docker/.env
+    volumes:
+      - ./MCP:/app
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  db-data:
