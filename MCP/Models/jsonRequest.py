@@ -6,3 +6,11 @@ class JSONRPCRequest(BaseModel):
     method: str
     params: dict = {}
     id: int = 1
+
+    def to_string(self):
+        return {
+            "jsonrpc": self.jsonrpc,
+            "method": self.method,
+            "params": self.params,
+            "id": self.id
+        }
