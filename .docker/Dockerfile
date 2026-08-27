@@ -21,4 +21,4 @@ COPY MCP/ .
 EXPOSE 8000
 
 # Run the application
-CMD ["python", "-m", "app.py", "--port", "8000"]
+CMD ["python", "-m", "app.py"]

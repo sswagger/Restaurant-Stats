@@ -18,7 +18,7 @@ services:
       context: .
       dockerfile: .docker/Dockerfile
     container_name: restaurant-mcp
-    command: ["python", "-m", "app", "--port", "8000"]
+    command: ["python", "-m", "app"]
     ports:
       - "8000:8000"  # MCP HTTP JSON-RPC endpoint (host:container)
     env_file:

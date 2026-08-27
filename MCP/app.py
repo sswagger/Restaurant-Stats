@@ -1,25 +1,25 @@
 from fastmcp import FastMCP
 from Models.jsonResponce import JSONRPCResponse
 
-app = FastMCP("Restaurant DB MCP Server", instructions="An MCP that provides tools for statistical data from a restaurant",)
+app = FastMCP("Restaurant DB MCP Server", instructions="An MCP that provides tools for statistical data from a restaurant")
 
 @app.tool(
-	name="get schema",
-	description="returns the databases schema",
+	name="get-schema",
+	description="returns the database's schema",
 )
-async def get_schema() -> str:
+async def get_schema() -> JSONRPCResponse:
 	x = JSONRPCResponse()
 	x.set_result("some data to show user")
-	return ""
+	return x
 
 @app.tool()
-async def create_row() -> list[str]:
+async def create_row() -> str:
 	return [""]
 
 @app.tool()
 async def delete_row() -> list[str]:
 	return [""]
-s
+
 @app.tool()
 async def edit_row() -> list[str]:
 	return [""]
@@ -39,3 +39,6 @@ async def execute_sql() -> list[list[str]]:
 @app.tool()
 async def get_curr_time() -> str:
 	return ""
+
+if __name__ == "__main__":
+	app.run(transport="http", host="0.0.0.0", port=8000)
