@@ -1,5 +1,6 @@
+from datetime import datetime
 from fastmcp import FastMCP
-from Models.jsonResponce import JSONRPCResponse
+import datetime
 
 app = FastMCP("Restaurant DB MCP Server", instructions="An MCP that provides tools for statistical data from a restaurant")
 
@@ -7,14 +8,13 @@ app = FastMCP("Restaurant DB MCP Server", instructions="An MCP that provides too
 	name="get-schema",
 	description="returns the database's schema",
 )
-async def get_schema() -> JSONRPCResponse:
-	x = JSONRPCResponse()
-	x.set_result("some data to show user")
+async def get_schema() -> str:
+	x = "some data to show user"
 	return x
 
 @app.tool()
 async def create_row() -> str:
-	return [""]
+	return ""
 
 @app.tool()
 async def delete_row() -> list[str]:
@@ -36,9 +36,12 @@ async def read_where() -> list[list[str]]:
 async def execute_sql() -> list[list[str]]:
 	return [[""]]
 
-@app.tool()
+@app.tool(
+	name="get-timestamp",
+	description="returns the current datetime"
+)
 async def get_curr_time() -> str:
-	return ""
+	return str(datetime.datetime.now())
 
 if __name__ == "__main__":
 	app.run(transport="http", host="0.0.0.0", port=8000)
