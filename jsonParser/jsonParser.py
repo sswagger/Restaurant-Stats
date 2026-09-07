@@ -1,16 +1,17 @@
 #=== Imported Modules ===#
 import json
 import mysql.connector
+import re
+from table import Table
 
-from app import execute_sql
-
-
+#=== jsonParser class ===#
 class jsonParser:
 	def __init__(self, db, datapath, key):
 		self.datapath = datapath
 		self.jsonObj = {}
 		self.key = key
 		self.db = db
+		self.tables = []
 
 
 		# get data from file
@@ -22,9 +23,45 @@ class jsonParser:
 			return
 
 	def parse_to_db(self):
-		execute_sql(
+		self.execute_sql(
 			f"CREATE TABLE IF NOT EXISTS {self.key} ()"
 		)
+
+	def create_db(self, start_json=None, parent=None):
+		# get data
+		whole_json = start_json
+		if whole_json is None:
+			try:
+				with open(self.datapath, "r") as file:
+					whole_json = json.load(file)
+			except FileNotFoundError:
+				return {}
+
+		new_table = Table()
+		new_table.add_column("Id", None, "INTEGER", False)
+		for k, v in whole_json.items():
+			if type(v) is list:
+				if type(v[0]) is dict:
+					child_table = Table()
+					child_table.add_name(k)
+					child_table.copy_columns(self.create_db(whole_json.get(k)[0], child_table))
+
+					if parent is not None:
+						child_table.add_column(parent.name+"_Id", parent, "INTEGER", False)
+
+					self.tables.append(child_table.to_sql())
+				else:
+					pass
+			elif type(v) is str:
+				new_table.add_column(k, None, "VARCHAR(50)", True)
+			elif type(v) is int:
+				new_table.add_column(k, None, "INTEGER", True)
+			elif type(v) is bool:
+				new_table.add_column(k, None, "BOOLEAN", True)
+			elif type(v) is float:
+				new_table.add_column(k, None, "DECIMAL(5, 2)", True)
+
+		return new_table
 
 	def get_json(self, keys:list, i:int=0, start_json=None):
 		# get or set json object
@@ -61,4 +98,6 @@ class jsonParser:
 
 if __name__ == "__main__":
 	statsDB = jsonParser("statsDb", "data/data.json", "shifts")
-	print(statsDB.get_json([16, "tips"]))
+	statsDB.create_db().to_sql()
+	for i in statsDB.tables:
+		print(i)
