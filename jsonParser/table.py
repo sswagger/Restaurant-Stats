@@ -11,7 +11,27 @@ class Table:
 		self.columns: list[dict[str, str | bool | None]] = []
 
 	def to_sql(self):
-		return [self.name, self.columns]
+		sql = f"CREATE TABLE IF NOT EXISTS {self.name} ("
+
+		for i in self.columns:
+			sql += f"{i["key"]} {i["type"]}"
+
+			if i["key"] == "Id":
+				sql += " PRIMARY KEY AUTO_INCREMENT"
+				i["table"] = None
+				i["nullable"] = False
+
+			if i["table"] is not None:
+				sql += " FOREIGN KEY"
+				i["nullable"] = False
+
+			if not i["nullable"]:
+				sql += " NOT NULL"
+			sql += ", "
+
+		sql += ")"
+
+		return sql
 
 	def add_column(self, key, table, col_type, nullable):
 		self.columns.append({"key": key, "table": table, "type": col_type, "nullable": nullable})
