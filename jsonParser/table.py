@@ -1,6 +1,6 @@
 class Table:
 	def __init__(self):
-		self.name = ""
+		self.name:str = ""
 
 		# {
 		#     "key": "x",
@@ -9,36 +9,67 @@ class Table:
 		#     "nullable": False
 		# }
 		self.columns: list[dict[str, str | bool | None]] = []
+		self.pk:list[str] = []
 
 	def to_sql(self):
+		# create table sql
 		sql = f"CREATE TABLE IF NOT EXISTS {self.name} ("
 
+		# loop through items and write the appropriate sql
 		for i in self.columns:
 			sql += f"{i["key"]} {i["type"]}"
 
+			# if key is Id, make it the primary key and auto increment
 			if i["key"] == "Id":
 				sql += " PRIMARY KEY AUTO_INCREMENT"
+				# since this is pk, it cannot be null or link to a different table
 				i["table"] = None
 				i["nullable"] = False
 
-			if i["table"] is not None:
+			# check to see if it is fk
+			if i["table"] is not None and i["key"] not in self.pk:
+				# print("fk: " + str(i["key"]))
+				# print("pks: " + str(self.pk))
 				sql += " FOREIGN KEY"
+				# if it is a fk, then it cannot be null
 				i["nullable"] = False
 
+			# if it is not nullable, add NOT NULL
 			if not i["nullable"]:
 				sql += " NOT NULL"
+
 			sql += ", "
+
+		# for composite primary keys
+		if len(self.pk) > 0:
+			sql += "PRIMARY KEY ("
+			for j in self.pk:
+				sql += j
+				sql += ", "
+			sql = sql[:-2]
+			sql += ")"
+		else:
+			# remove the last space and comma
+			sql = sql[:-2]
 
 		sql += ")"
 
 		return sql
 
-	def add_column(self, key, table, col_type, nullable):
-		self.columns.append({"key": key, "table": table, "type": col_type, "nullable": nullable})
-
 	def copy_columns(self, table):
 		for i in table.columns:
 			self.add_column(i["key"], i["table"], i["type"], i["nullable"])
+		for i in table.pk:
+			self.add_pk(i)
 
 	def add_name(self, name):
 		self.name = name
+
+	def add_pk(self, primary_key):
+		self.pk.append(primary_key)
+
+	def add_column(self, key, table, col_type, nullable):
+		if key == "Id":
+			self.columns.insert(0, {"key": key, "table": table, "type": col_type, "nullable": nullable})
+			return
+		self.columns.append({"key": key, "table": table, "type": col_type, "nullable": nullable})

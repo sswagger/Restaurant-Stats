@@ -6,10 +6,9 @@ from table import Table
 
 #=== jsonParser class ===#
 class jsonParser:
-	def __init__(self, db, datapath, key):
+	def __init__(self, db, datapath):
 		self.datapath = datapath
 		self.jsonObj = {}
-		self.key = key
 		self.db = db
 		self.tables = []
 
@@ -18,48 +17,71 @@ class jsonParser:
 		try:
 			with open(self.datapath, "r") as file:
 				whole_json = json.load(file)
-				self.jsonObj = whole_json.get(key)
+				self.jsonObj = whole_json
 		except FileNotFoundError:
 			return
 
 	def parse_to_db(self):
-		self.execute_sql(
-			f"CREATE TABLE IF NOT EXISTS {self.key} ()"
-		)
+		pass
 
-	def create_db(self, start_json=None, parent=None):
+	def create_db_schema(self, start_json=None, parent=None):
 		# get data
 		whole_json = start_json
 		if whole_json is None:
-			try:
-				with open(self.datapath, "r") as file:
-					whole_json = json.load(file)
-			except FileNotFoundError:
-				return {}
+			whole_json = self.jsonObj
 
+		# create a new table
 		new_table = Table()
-		new_table.add_column("Id", None, "INTEGER", False)
+		found_pk = False
+		# loop through json
 		for k, v in whole_json.items():
+			# look for an id already defined
+			if "Id" in k:
+				found_pk = True
+
+			# check the type of the value
 			if type(v) is list:
 				if type(v[0]) is dict:
+					# if it's a list of dictionaries, then it is a child table
+
+					# create a new table, and add the name
 					child_table = Table()
 					child_table.add_name(k)
-					child_table.copy_columns(self.create_db(whole_json.get(k)[0], child_table))
+					# get the columns from it
+					child_table.copy_columns(self.create_db_schema(whole_json.get(k)[0], child_table))
 
+					# add current table's name as parent
 					if parent is not None:
-						child_table.add_column(parent.name+"_Id", parent, "INTEGER", False)
+						if len(child_table.pk) > 0:
+							child_table.add_column(parent.name+"_Id", None, "INTEGER", True)
+							child_table.add_pk(parent.name+"_Id")
+						else:
+							child_table.add_column(parent.name+"_Id", parent, "INTEGER", False)
 
-					self.tables.append(child_table.to_sql())
-				else:
-					pass
+					# add it to the list of tables
+					self.tables.append(child_table)
 			elif type(v) is str:
-				new_table.add_column(k, None, "VARCHAR(50)", True)
+				# if it is a string, then it is either a datetime or a varchar
+				pat = "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+				if re.search(pat, v):
+					new_table.add_column(k, None, "DATETIME", True)
+				else:
+					new_table.add_column(k, None, "VARCHAR(50)", True)
 			elif type(v) is int:
+				# if it's an int, then check if it's an id
+				if "_Id" in k:
+					new_table.add_pk(str(k))
+					found_pk = True
 				new_table.add_column(k, None, "INTEGER", True)
 			elif type(v) is bool:
+				# boolean
 				new_table.add_column(k, None, "BOOLEAN", True)
 			elif type(v) is float:
+				# decimal
 				new_table.add_column(k, None, "DECIMAL(5, 2)", True)
+
+		if not found_pk :
+			new_table.add_column("Id", None, "INTEGER", False)
 
 		return new_table
 
@@ -97,7 +119,31 @@ class jsonParser:
 
 
 if __name__ == "__main__":
-	statsDB = jsonParser("statsDb", "data/data.json", "shifts")
-	statsDB.create_db().to_sql()
+	print(r"╔==================================================╗")
+	print(r"║             /||   /||||   /||\   ||  ||          ║")
+	print(r"║              ||  ||      ||  ||  ||| ||          ║")
+	print(r"║              ||   \||\   ||  ||  ||||||          ║")
+	print(r"║          ||  ||      ||  ||__||  || |||          ║")
+	print(r"║           \||||  ||||/    \||/   ||  ||          ║")
+	print(r"║                                                  ║")
+	print(r"║   /||\    /||\    /||\    /||||   /||||   /||\   ║")
+	print(r"║  ||__||  ||__||  ||__||  ||      ||      ||__||  ║")
+	print(r"║  ||||/   ||||||  ||||/    \||\   ||||||  ||||/   ║")
+	print(r"║  ||      ||  ||  || \\       ||  ||      || \\   ║")
+	print(r"║  ||      ||  ||  ||  \\  ||||/    \||||  ||  \\  ║")
+	print(r"╚==================================================╝")
+
+	print("reading json from data/data.json...")
+	statsDB = jsonParser("statsDb", "data/data.json")
+	print("converting to sql...")
+	statsDB.create_db_schema().to_sql()
+
+	schema = ""
 	for i in statsDB.tables:
-		print(i)
+		schema += i.to_sql()
+		print(i.to_sql())
+
+	user_sql = input("Execute SQL? [Y]es|[n]o: ")
+	if "y" in user_sql.lower():
+		schema += ";"
+		statsDB.execute_sql(schema)
