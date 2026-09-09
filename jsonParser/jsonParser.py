@@ -1,5 +1,7 @@
 #=== Imported Modules ===#
 import json
+import time
+
 import mysql.connector
 import re
 from table import Table
@@ -38,6 +40,7 @@ class jsonParser:
 			# look for an id already defined
 			if "Id" in k:
 				found_pk = True
+			curr_table_i = len(self.tables)
 
 			# check the type of the value
 			if type(v) is list:
@@ -53,13 +56,14 @@ class jsonParser:
 					# add current table's name as parent
 					if parent is not None:
 						if len(child_table.pk) > 0:
-							child_table.add_column(parent.name+"_Id", None, "INTEGER", True)
+							child_table.add_column(parent.name+"_Id", parent, "INTEGER", True)
 							child_table.add_pk(parent.name+"_Id")
 						else:
 							child_table.add_column(parent.name+"_Id", parent, "INTEGER", False)
 
-					# add it to the list of tables
-					self.tables.append(child_table)
+						# add it to the list of tables
+					self.tables.insert(curr_table_i, child_table)
+
 			elif type(v) is str:
 				# if it is a string, then it is either a datetime or a varchar
 				pat = "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
@@ -70,9 +74,13 @@ class jsonParser:
 			elif type(v) is int:
 				# if it's an int, then check if it's an id
 				if "_Id" in k:
-					new_table.add_pk(str(k))
-					found_pk = True
-				new_table.add_column(k, None, "INTEGER", True)
+					for j in self.tables:
+						if j.name == k[:-3]:
+							new_table.add_column(k, j, "INTEGER", True)
+							new_table.add_pk(str(k))
+							found_pk = True
+				else:
+					new_table.add_column(k, None, "INTEGER", True)
 			elif type(v) is bool:
 				# boolean
 				new_table.add_column(k, None, "BOOLEAN", True)
@@ -131,19 +139,23 @@ if __name__ == "__main__":
 	print(r"║  ||||/   ||||||  ||||/    \||\   ||||||  ||||/   ║")
 	print(r"║  ||      ||  ||  || \\       ||  ||      || \\   ║")
 	print(r"║  ||      ||  ||  ||  \\  ||||/    \||||  ||  \\  ║")
+	print(r"╠==================================================╣")
+	print(r"║   Ensure data/data.json contains data to parse   ║")
 	print(r"╚==================================================╝")
 
+	db = input("What is the name of the database? : ")
 	print("reading json from data/data.json...")
-	statsDB = jsonParser("statsDb", "data/data.json")
+	statsDB = jsonParser(db, "data/data.json")
 	print("converting to sql...")
 	statsDB.create_db_schema().to_sql()
 
-	schema = ""
 	for i in statsDB.tables:
-		schema += i.to_sql()
 		print(i.to_sql())
 
 	user_sql = input("Execute SQL? [Y]es|[n]o: ")
 	if "y" in user_sql.lower():
-		schema += ";"
-		statsDB.execute_sql(schema)
+		for i in statsDB.tables:
+			statsDB.execute_sql(i.to_sql())
+			time.sleep(1)
+
+		print("SQL run Successfully!")

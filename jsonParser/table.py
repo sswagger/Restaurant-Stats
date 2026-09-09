@@ -13,7 +13,7 @@ class Table:
 
 	def to_sql(self):
 		# create table sql
-		sql = f"CREATE TABLE IF NOT EXISTS {self.name} ("
+		sql = f"CREATE TABLE IF NOT EXISTS `{self.name}` ("
 
 		# loop through items and write the appropriate sql
 		for i in self.columns:
@@ -24,14 +24,6 @@ class Table:
 				sql += " PRIMARY KEY AUTO_INCREMENT"
 				# since this is pk, it cannot be null or link to a different table
 				i["table"] = None
-				i["nullable"] = False
-
-			# check to see if it is fk
-			if i["table"] is not None and i["key"] not in self.pk:
-				# print("fk: " + str(i["key"]))
-				# print("pks: " + str(self.pk))
-				sql += " FOREIGN KEY"
-				# if it is a fk, then it cannot be null
 				i["nullable"] = False
 
 			# if it is not nullable, add NOT NULL
@@ -47,12 +39,14 @@ class Table:
 				sql += j
 				sql += ", "
 			sql = sql[:-2]
-			sql += ")"
-		else:
-			# remove the last space and comma
-			sql = sql[:-2]
+			sql += "), "
 
-		sql += ")"
+		for j in self.columns:
+			if j["table"] is not None:
+				sql += f"FOREIGN KEY ({j["key"]}) REFERENCES `{j["table"].name}`(Id) ON DELETE CASCADE ON UPDATE CASCADE, "
+
+		sql = sql[:-2]
+		sql += ");"
 
 		return sql
 
