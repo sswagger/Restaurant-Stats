@@ -10,8 +10,9 @@ class Table:
 		# }
 		self.columns: list[dict[str, str | bool | None]] = []
 		self.pk:list[str] = []
+		self.json_id = False
 
-	def to_sql(self):
+	def create_sql(self):
 		# create table sql
 		sql = f"CREATE TABLE IF NOT EXISTS `{self.name}` ("
 
@@ -49,6 +50,12 @@ class Table:
 		sql += ");"
 
 		return sql
+
+	def get_columns(self):
+		col_names = []
+		for i in self.columns:
+			col_names.append(i['key'])
+		return col_names
 
 	def copy_columns(self, table):
 		for i in table.columns:

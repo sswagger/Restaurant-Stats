@@ -1,7 +1,6 @@
 #=== Imported Modules ===#
 import json
 import time
-
 import mysql.connector
 import re
 from table import Table
@@ -12,7 +11,7 @@ class jsonParser:
 		self.datapath = datapath
 		self.jsonObj = {}
 		self.db = db
-		self.tables = []
+		self.tables:list[Table] = []
 
 
 		# get data from file
@@ -23,8 +22,121 @@ class jsonParser:
 		except FileNotFoundError:
 			return
 
-	def parse_to_db(self):
-		pass
+	def fill_db(self, start_json=None, parent_id=None, parent_table_name=None):
+		# get json string
+		whole_json = start_json
+		if whole_json is None:
+			whole_json = self.jsonObj
+
+		# Track record count per table for auto-increment Ids
+		table_counters = {}
+		# Store the generated SQL statements
+		sql_list = []
+
+		def recursive_fill(json_obj, parent_id, parent_table_name):
+			# loop through json
+			for key, value in json_obj.items():
+				if type(value) is dict:
+					# Recurse into nested dict
+					recursive_fill(value, parent_id, parent_table_name)
+				elif type(value) is list:
+					# This is a table - find the corresponding Table object
+					table_name = key
+					curr_table = None
+					for t in self.tables:
+						if t.name == table_name:
+							curr_table = t
+							break
+					if curr_table is None:
+						# skip if no matching table
+						continue
+
+					# Initialize counter for this table if needed
+					if table_name not in table_counters:
+						table_counters[table_name] = 0
+
+					# Process each record in the list
+					for record in value:
+						if record is None:
+							# skip null entries
+							continue
+
+						# Determine the Id value for this record
+						if curr_table.json_id:
+							# Use the Id from the JSON
+							record_id = record.get("Id")
+							# Update counter if needed for proper ordering
+							if record_id and record_id > table_counters[table_name]:
+								table_counters[table_name] = record_id
+						else:
+							# Auto-increment
+							table_counters[table_name] += 1
+							record_id = table_counters[table_name]
+
+						# Build INSERT statement
+						sql = self.build_insert_statement(curr_table, record, parent_id, record_id)
+						sql_list.append(sql)
+
+						# Recursively process any nested lists in this record
+						recursive_fill(record, record_id, table_name)
+
+					# Reset counter after processing this table (for top-level tables)
+					if parent_table_name is None:
+						table_counters[table_name] = 0
+
+		# Start the recursive processing
+		recursive_fill(whole_json, parent_id, parent_table_name)
+
+		# return sql
+		return "\n".join(sql_list)
+
+	def build_insert_statement(self, table, record, parent_id, record_id):
+		sql = f"INSERT INTO `{table.name}` ("
+
+		# Build column list and values
+		columns = []
+		values = []
+
+		for col in table.columns:
+			col_name = col['key']
+
+			# Skip Id column if auto-increment
+			if col_name == "Id" and not table.json_id:
+				continue
+
+			columns.append(col_name)
+
+			# Determine the value
+			value = None
+			if col_name == "Id":
+				# Use the computed record_id
+				value = record_id
+			if col['table'] is not None:
+				# This is a foreign key to parent - use parent_id
+				value = parent_id
+			if col_name in record:
+				value = record[col_name]
+
+			# Format the value based on type
+			if value is None:
+				values.append("NULL")
+			elif col['type'] == "VARCHAR(50)":
+				# Escape single quotes in string values
+				escaped = str(value).replace("'", "''")
+				values.append(f"'{escaped}'")
+			elif col['type'] == "BOOLEAN":
+				values.append("1" if value else "0")
+			elif col['type'] == "DATETIME":
+				# Keep datetime as-is (ISO format from JSON)
+				values.append(f"'{value}'")
+			else:
+				# INTEGER, DECIMAL, etc.
+				values.append(str(value))
+
+		sql += ", ".join(columns) + ") VALUES ("
+		sql += ", ".join(values) + ")"
+
+		return sql
 
 	def create_db_schema(self, start_json=None, parent=None):
 		# get data
@@ -34,12 +146,11 @@ class jsonParser:
 
 		# create a new table
 		new_table = Table()
-		found_pk = False
 		# loop through json
 		for k, v in whole_json.items():
 			# look for an id already defined
 			if "Id" in k:
-				found_pk = True
+				new_table.json_id = True
 			curr_table_i = len(self.tables)
 
 			# check the type of the value
@@ -74,11 +185,12 @@ class jsonParser:
 			elif type(v) is int:
 				# if it's an int, then check if it's an id
 				if "_Id" in k:
+					# check that the table exists, and it's not just a naming coincident
 					for j in self.tables:
 						if j.name == k[:-3]:
 							new_table.add_column(k, j, "INTEGER", True)
 							new_table.add_pk(str(k))
-							found_pk = True
+							new_table.json_id = True
 				else:
 					new_table.add_column(k, None, "INTEGER", True)
 			elif type(v) is bool:
@@ -88,7 +200,7 @@ class jsonParser:
 				# decimal
 				new_table.add_column(k, None, "DECIMAL(5, 2)", True)
 
-		if not found_pk :
+		if not new_table.json_id :
 			new_table.add_column("Id", None, "INTEGER", False)
 
 		return new_table
@@ -106,8 +218,12 @@ class jsonParser:
 			# since this is the last key, just return the value
 			return json_obj[keys[i]]
 
-	def get_table(self):
-		pass
+	def get_table(self, table_name:str):
+		for table_i in self.tables:
+			if table_i.name == table_name:
+				return table_i.create_sql()
+
+		return "NOT FOUND"
 
 	def execute_sql(self, sql):
 		# Connect to MySQL
@@ -128,34 +244,39 @@ class jsonParser:
 
 if __name__ == "__main__":
 	print(r"╔==================================================╗")
-	print(r"║             /||   /||||   /||\   ||  ||          ║")
+	print(r"║             |||   /||||   /||\   ||  ||          ║")
 	print(r"║              ||  ||      ||  ||  ||| ||          ║")
 	print(r"║              ||   \||\   ||  ||  ||||||          ║")
 	print(r"║          ||  ||      ||  ||__||  || |||          ║")
-	print(r"║           \||||  ||||/    \||/   ||  ||          ║")
+	print(r"║           \||/   ||||/    \||/   ||  ||          ║")
 	print(r"║                                                  ║")
 	print(r"║   /||\    /||\    /||\    /||||   /||||   /||\   ║")
 	print(r"║  ||__||  ||__||  ||__||  ||      ||      ||__||  ║")
 	print(r"║  ||||/   ||||||  ||||/    \||\   ||||||  ||||/   ║")
-	print(r"║  ||      ||  ||  || \\       ||  ||      || \\   ║")
-	print(r"║  ||      ||  ||  ||  \\  ||||/    \||||  ||  \\  ║")
+	print(r"║  ||      ||  ||  || ||       ||  ||      || ||   ║")
+	print(r"║  ||      ||  ||  ||  ||  ||||/    \||||  ||  ||  ║")
 	print(r"╠==================================================╣")
-	print(r"║   Ensure data/data.json contains data to parse   ║")
+	print(r"║ Recursively parses data/data.json into MySQL DB. ║")
 	print(r"╚==================================================╝")
 
 	db = input("What is the name of the database? : ")
 	print("reading json from data/data.json...")
 	statsDB = jsonParser(db, "data/data.json")
+	time.sleep(1)
 	print("converting to sql...")
-	statsDB.create_db_schema().to_sql()
+	statsDB.create_db_schema().create_sql()
+	time.sleep(1)
 
+	print()
 	for i in statsDB.tables:
-		print(i.to_sql())
+		print(i.create_sql())
 
 	user_sql = input("Execute SQL? [Y]es|[n]o: ")
 	if "y" in user_sql.lower():
 		for i in statsDB.tables:
-			statsDB.execute_sql(i.to_sql())
+			statsDB.execute_sql(i.create_sql())
 			time.sleep(1)
 
 		print("SQL run Successfully!")
+
+	print(statsDB.fill_db())

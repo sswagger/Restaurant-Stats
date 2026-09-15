@@ -1313,7 +1313,10 @@
           "alcohol": false,
           "special": false,
           "multiple_payment": false,
-          "diner": ["Togo",
+          "diner": [
+            {
+              "table_Id": 26
+            },
             {
               "table_Id": 1
             }
