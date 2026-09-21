@@ -65,24 +65,25 @@ class JsonParser:
 
 					# Process each record in the list
 					for record in value:
-						# Determine the Id value for this record
-						if curr_table.json_id:
-							# Use the Id from the JSON
-							record_id = record.get("Id")
-							# Update counter if record_id is higher
-							if record_id and record_id > table_counters[table_name]:
-								table_counters[table_name] = record_id
-						else:
-							# Auto-increment
-							table_counters[table_name] += 1
-							record_id = table_counters[table_name]
+						if record is not None:
+							# Determine the Id value for this record
+							if curr_table.json_id:
+								# Use the Id from the JSON
+								record_id = record.get("Id")
+								# Update counter if record_id is higher
+								if record_id and record_id > table_counters[table_name]:
+									table_counters[table_name] = record_id
+							else:
+								# Auto-increment
+								table_counters[table_name] += 1
+								record_id = table_counters[table_name]
 
-						# Build INSERT statement
-						sql = self.build_insert_statement(curr_table, record, parent_id, record_id)
-						sql_list.append(sql)
+							# Build INSERT statement
+							sql = self.build_insert_statement(curr_table, record, parent_id, record_id)
+							sql_list.append(sql)
 
-						# Recursively process any nested lists in this record
-						recursive_fill(record, record_id, table_name)
+							# Recursively process any nested lists in this record
+							recursive_fill(record, record_id, table_name)
 
 					# Reset counter after processing this table (for top-level tables)
 					if parent_table_name is None:
@@ -138,7 +139,7 @@ class JsonParser:
 				values.append(str(value))
 
 		sql += ", ".join(columns) + ") VALUES ("
-		sql += ", ".join(values) + ")"
+		sql += ", ".join(values) + ");"
 
 		return sql
 
@@ -360,13 +361,13 @@ class CLI(cmd.Cmd):
 			print("\t`sql memory`: read sql in memory")
 			print("\t`sql execute`: run the sql that is in memory")
 
-		self.sql = []
 		match arg:
 			case "create":
 				try:
+					self.sql = []
 					self.database.create_db_schema()
 					for i in self.database.tables:
-						self.sql.append(i.create_sql)
+						self.sql.append(i.create_sql())
 						print(i.create_sql())
 
 					print("sql saved in memory run `sql execute` to run memory.")
@@ -376,9 +377,11 @@ class CLI(cmd.Cmd):
 
 			case "fill":
 				try:
-					insert_sql = self.database.fill_db
+					self.sql = []
+					self.database.create_db_schema()
+					insert_sql = self.database.fill_db()
 
-					insert_sql.split("\n")
+					insert_sql = insert_sql.split("\n")
 					for i in insert_sql:
 						self.sql.append(i)
 						print(i)
@@ -398,7 +401,7 @@ class CLI(cmd.Cmd):
 			case "execute":
 				try:
 					for i in self.sql:
-						self.database.execute(i)
+						self.database.execute_sql(i)
 					print("All sql successfully run")
 				except AttributeError:
 					print(f"{self.color.get_color("error")}ERROR: in command `sql {arg}`{self.color.neutral}")
