@@ -30,11 +30,6 @@ Then run the following to start JSON PARSER:
 python ./jsonParser/JsonParser.py
 ```
 
-## Project Story
-I originally had a lot of data that I wanted to build a database out of.
-However, I didn't really want to write a long SQL statement to parse it into a database.
-So instead, I built this app to interpret my data into a database schema based on the JSON object.
-
 ## Notes
 For using your own JSON object, there are some restrictions on how the JSON can be formatted:
 1.  Every list of objects in interpreted as a new table.  
