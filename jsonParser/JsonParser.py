@@ -4,8 +4,6 @@ import cmd
 import mysql.connector
 import re
 import time
-
-from model import color
 from model.table import Table
 from model.color import Color
 import shlex
