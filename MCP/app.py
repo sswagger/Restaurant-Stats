@@ -7,7 +7,10 @@ import mysql.connector
 
 load_dotenv()
 db_name = os.getenv('DATABASE', 'statsDb')
-app = FastMCP("Restaurant DB MCP Server", instructions="An MCP server that connects to a mySQL database")
+app = FastMCP(
+	"Restaurant DB MCP Server",
+	instructions="An MCP server that connects to a mySQL database. When referencing a table name or a column name, you must use backticks (`) to denote them."
+)
 
 @app.tool(
 	name="get-tables",
@@ -55,7 +58,7 @@ async def get_tables() -> list[dict[str, str | list]]:
 async def read(sql: str) -> list[list[str]]:
 	if not "SELECT" in sql:
 		return [["you must use a SELECT statement; for INSERT, UPDATE, and DELETE use execute_sql(sql: str)"]]
-	if "DROP" in sql:
+	if "DROP" in sql or "RENAME" in sql or "ALTER" in sql:
 		return [["insufficient permissions"]]
 
 	conn = mysql.connector.connect(
@@ -88,8 +91,9 @@ async def read(sql: str) -> list[list[str]]:
 	description="for executing INSERT, UPDATE, and DELETE sql"
 )
 async def execute_sql(sql: str) -> str:
-	if "DROP" in sql:
+	if "DROP" in sql or "RENAME" in sql or "ALTER" in sql:
 		return "insufficient permissions"
+
 	try:
 		conn = mysql.connector.connect(
 			host="mysql",
@@ -119,17 +123,51 @@ async def get_curr_time() -> str:
 
 @app.tool(
 	name="rename-table",
-	description="returns the current datetime"
+	description="renames a table in the database"
 )
-async def rename_table() -> str:
-	return str(datetime.datetime.now())
+async def rename_table(old_name: str, new_name: str) -> str:
+	try:
+		conn = mysql.connector.connect(
+			host="mysql",
+			port=3306,
+			user="root",
+			password="root",
+			database=db_name
+		)
+		cursor = conn.cursor()
+
+		cursor.execute(f"RENAME TABLE {old_name} TO {new_name};")
+		conn.commit()
+		cursor.close()
+		conn.close()
+
+		return "success"
+	except Exception as ex:
+		return f"failed to execute sql: {ex}"
 
 @app.tool(
 	name="rename-column",
-	description="returns the current datetime"
+	description="renames a column of a table"
 )
-async def rename_column() -> str:
-	return str(datetime.datetime.now())
+async def rename_column(table: str, old_name: str, new_name: str) -> str:
+	try:
+		conn = mysql.connector.connect(
+			host="mysql",
+			port=3306,
+			user="root",
+			password="root",
+			database=db_name
+		)
+		cursor = conn.cursor()
+
+		cursor.execute(f"ALTER TABLE {table} RENAME COLUMN {old_name} TO {new_name};")
+		conn.commit()
+		cursor.close()
+		conn.close()
+
+		return "success"
+	except Exception as ex:
+		return f"failed to execute sql: {ex}"
 
 if __name__ == "__main__":
 	app.run(transport="http", host="0.0.0.0", port=8000)
