@@ -54,7 +54,7 @@ For using your own JSON object, there are some restrictions on how the JSON can 
 }
 ```
 3.  Children tables are nested "tables".
-	In the example below, fav_stuff will be automatically given an FK called `my_table_Id`
+	In the example below, `github` will be automatically given an FK called `my_table_Id`
 ```json
 {
   "my_table": [
