@@ -3,14 +3,13 @@ import json
 import cmd
 import mysql.connector
 import re
-
 from mysql.connector import DatabaseError
-
 from model.table import Table
 from model.color import Color
 import shlex
 import argparse
 
+# TODO: allow user the ability to create a database
 #=== jsonParser class ===#
 class JsonParser:
 	def __init__(self):
@@ -53,6 +52,53 @@ class JsonParser:
 		# Store the generated SQL statements
 		sql_list = []
 
+		def build_insert_statement(table, record, parent_id, record_id):
+			sql = f"INSERT INTO `{table.name}` ("
+
+			# Build column list and values
+			columns = []
+			values = []
+
+			for col in table.columns:
+				col_name = col['key']
+
+				# Skip Id column if auto-increment
+				if col_name == "Id" and not table.json_id:
+					continue
+
+				columns.append(col_name)
+
+				# Determine the value
+				value = None
+				if col_name == "Id":
+					# Use the computed record_id
+					value = record_id
+				if col['table'] is not None:
+					# This is a foreign key to parent - use parent_id
+					value = parent_id
+				if col_name in record:
+					value = record[col_name]
+
+				# Format the value based on type
+				if value is None:
+					values.append("NULL")
+				elif col['type'] == "VARCHAR(50)":
+					# Escape single quotes in string values
+					escaped = str(value).replace("'", "''")
+					values.append(f"'{escaped}'")
+				elif col['type'] == "BOOLEAN":
+					values.append("1" if value else "0")
+				elif col['type'] == "DATETIME":
+					# Keep datetime as-is (ISO format from JSON)
+					values.append(f"'{value}'")
+				else:
+					# INTEGER, DECIMAL, etc.
+					values.append(str(value))
+
+			sql += ", ".join(columns) + ") VALUES ("
+			sql += ", ".join(values) + ");"
+
+			return sql
 		def recursive_fill(json_obj, parent_id, parent_table_name):
 			# check for maximum recursive depth
 			self.depth += 1
@@ -99,7 +145,7 @@ class JsonParser:
 								record_id = table_counters[table_name]
 
 							# Build INSERT statement
-							sql = self.build_insert_statement(curr_table, record, parent_id, record_id)
+							sql = build_insert_statement(curr_table, record, parent_id, record_id)
 							sql_list.append(sql)
 
 							# Recursively process any nested lists in this record
@@ -117,54 +163,6 @@ class JsonParser:
 			return "\n".join(sql_list)
 		else:
 			return ""
-
-	def build_insert_statement(self, table, record, parent_id, record_id):
-		sql = f"INSERT INTO `{table.name}` ("
-
-		# Build column list and values
-		columns = []
-		values = []
-
-		for col in table.columns:
-			col_name = col['key']
-
-			# Skip Id column if auto-increment
-			if col_name == "Id" and not table.json_id:
-				continue
-
-			columns.append(col_name)
-
-			# Determine the value
-			value = None
-			if col_name == "Id":
-				# Use the computed record_id
-				value = record_id
-			if col['table'] is not None:
-				# This is a foreign key to parent - use parent_id
-				value = parent_id
-			if col_name in record:
-				value = record[col_name]
-
-			# Format the value based on type
-			if value is None:
-				values.append("NULL")
-			elif col['type'] == "VARCHAR(50)":
-				# Escape single quotes in string values
-				escaped = str(value).replace("'", "''")
-				values.append(f"'{escaped}'")
-			elif col['type'] == "BOOLEAN":
-				values.append("1" if value else "0")
-			elif col['type'] == "DATETIME":
-				# Keep datetime as-is (ISO format from JSON)
-				values.append(f"'{value}'")
-			else:
-				# INTEGER, DECIMAL, etc.
-				values.append(str(value))
-
-		sql += ", ".join(columns) + ") VALUES ("
-		sql += ", ".join(values) + ");"
-
-		return sql
 
 	def create_db_schema(self, start_json=None, parent=None) -> list:
 		def find_tables(start_json=None, parent=None):
@@ -353,6 +351,7 @@ class CLI(cmd.Cmd):
 			print("\tThis command will output a table with all available commands")
 			print("\tEach command will have a brief description with it")
 			return
+		# todo: update help
 		print(r"'' = insert your string")
 		print(r"[] = one element")
 		print(r"|| = or")
@@ -401,6 +400,7 @@ class CLI(cmd.Cmd):
 			print(f"Recursive limit set to {args.recursion_depth}")
 
 	def do_get(self, arg: str):
+		# todo: add help
 		match arg:
 			case "json":
 				print(f"Json Path: {self.database.datapath}")
@@ -415,8 +415,9 @@ class CLI(cmd.Cmd):
 				print(f"Database Name: {self.database.db}")
 				print(f"Recursion Depth Limit: {self.database.ALLOWED_DEPTH}")
 
-	def do_read(self, arg: str="json"):
+	def do_read(self, arg: str):
 		if "?" in arg:
+			# todo: update help
 			print(self.color.get_color("header") + "`read` command:" + self.color.neutral)
 			print("\t`read [json || 'path']`")
 			print("\tThis command will read the data from the database")
@@ -433,6 +434,7 @@ class CLI(cmd.Cmd):
 
 	def do_sql(self, arg: str):
 		if "?" in arg:
+			# todo: update help
 			print(self.color.get_color("header") + "`sql` command:" + self.color.neutral)
 			print("\t`sql [create || fill || memory || execute]`")
 			print("\t`sql create`: generate the 'create table' sql and save to memory")
@@ -486,6 +488,10 @@ class CLI(cmd.Cmd):
 				except AttributeError:
 					print(f"{self.color.get_color("error")}ERROR: in command `sql {arg}`{self.color.neutral}")
 					print("No database selected\n\tTo resolve this run `set --db-name 'your-database-name'`, or type `help` for docs")
+				except mysql.connector.Error:
+					print(f"{self.color.get_color("error")}ERROR: in command `sql {arg}`{self.color.neutral}")
+					print("Database does not exist\n\tTo resolve this run `set --db-name 'your-database-name'`, or type `help` for docs")
+			# todo: add `sql clear`
 
 	def do_quit(self, arg: str):
 		if "?" in arg:
