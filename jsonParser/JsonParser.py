@@ -3,7 +3,9 @@ import json
 import cmd
 import mysql.connector
 import re
-import time
+
+from mysql.connector import DatabaseError
+
 from model.table import Table
 from model.color import Color
 import shlex
@@ -11,18 +13,32 @@ import argparse
 
 #=== jsonParser class ===#
 class JsonParser:
-	def __init__(self, db, datapath):
-		self.datapath = datapath
+	def __init__(self):
 		self.jsonObj = {}
-		self.db = db
+		self.json_config = {}
 		self.tables:list[Table] = []
-
+		self.depth = 0
+		self.ALLOWED_DEPTH = 10
+		self.datapath = "data/data.json"
+		self.db = ""
 
 		# get data from file
 		try:
-			with open(self.datapath, "r") as file:
-				whole_json = json.load(file)
-				self.jsonObj = whole_json
+			with open("config.json", "r") as c:
+				self.json_config = json.load(c)
+				try:
+					self.ALLOWED_DEPTH = self.json_config["recursive_depth"]
+				except AttributeError:
+					pass
+				try:
+					self.datapath = self.json_config["data_path"]
+				except AttributeError:
+					pass
+				try:
+					self.db = self.json_config["database_name"]
+				except AttributeError:
+					pass
+			self.read_json()
 		except FileNotFoundError:
 			return
 
@@ -38,6 +54,12 @@ class JsonParser:
 		sql_list = []
 
 		def recursive_fill(json_obj, parent_id, parent_table_name):
+			# check for maximum recursive depth
+			self.depth += 1
+			if self.depth > self.ALLOWED_DEPTH:
+				self.depth = 0
+				return
+
 			# loop through json
 			for key, value in json_obj.items():
 				if type(value) is dict:
@@ -87,11 +109,14 @@ class JsonParser:
 					if parent_table_name is None:
 						table_counters[table_name] = 0
 
-		# Start the recursive processing
-		recursive_fill(whole_json, parent_id, parent_table_name)
-
-		# return sql
-		return "\n".join(sql_list)
+		if len(self.jsonObj) > 0 and len(str(self.db)) > 0:
+			# Start the recursive processing
+			recursive_fill(whole_json, parent_id, parent_table_name)
+			self.depth = 0
+			# return sql
+			return "\n".join(sql_list)
+		else:
+			return ""
 
 	def build_insert_statement(self, table, record, parent_id, record_id):
 		sql = f"INSERT INTO `{table.name}` ("
@@ -141,74 +166,94 @@ class JsonParser:
 
 		return sql
 
-	def create_db_schema(self, start_json=None, parent=None):
-		# get data
-		whole_json = start_json
-		if whole_json is None:
-			whole_json = self.jsonObj
+	def create_db_schema(self, start_json=None, parent=None) -> list:
+		def find_tables(start_json=None, parent=None):
+			# check for maximum recursive depth
+			self.depth += 1
+			if self.depth > self.ALLOWED_DEPTH:
+				self.depth = 0
+				return Table()
+			# get data
+			whole_json = start_json
+			if whole_json is None:
+				whole_json = self.jsonObj
 
-		# create a new table
-		new_table = Table()
-		# loop through json
-		for k, v in whole_json.items():
-			# look for an id already defined
-			if "Id" in k:
-				new_table.json_id = True
-			curr_table_i = len(self.tables)
+			# create a new table
+			new_table = Table()
+			# loop through json
+			for k, v in whole_json.items():
+				# look for an id already defined
+				if "Id" in k:
+					new_table.json_id = True
+				curr_table_i = len(self.tables)
 
-			# check the type of the value
-			if type(v) is list:
-				if type(v[0]) is dict:
-					# if it's a list of dictionaries, then it is a child table
+				# check the type of the value
+				if type(v) is list:
+					if type(v[0]) is dict:
+						# if it's a list of dictionaries, then it is a child table
 
-					# create a new table, and add the name
-					child_table = Table()
-					child_table.add_name(k)
-					# get the columns from it
-					child_table.copy_columns(self.create_db_schema(whole_json.get(k)[0], child_table))
+						# create a new table, and add the name
+						child_table = Table()
+						child_table.add_name(k)
+						# get the columns from it
+						child_table.copy_columns(find_tables(whole_json.get(k)[0], child_table))
 
-					# add current table's name as parent
-					if parent is not None:
-						if len(child_table.pk) > 0:
-							child_table.add_column(parent.name+"_Id", parent, "INTEGER", True)
-							child_table.add_pk(parent.name+"_Id")
-						else:
-							child_table.add_column(parent.name+"_Id", parent, "INTEGER", False)
+						# add current table's name as parent
+						if parent is not None:
+							if len(child_table.pk) > 0:
+								child_table.add_column(parent.name+"_Id", parent, "INTEGER", True)
+								child_table.add_pk(parent.name+"_Id")
+							else:
+								child_table.add_column(parent.name+"_Id", parent, "INTEGER", False)
 
-						# add it to the list of tables
-					self.tables.insert(curr_table_i, child_table)
+							# add it to the list of tables
+						self.tables.insert(curr_table_i, child_table)
 
-			elif type(v) is str:
-				# if it is a string, then it is either a datetime or a varchar
-				pat = "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
-				if re.search(pat, v):
-					new_table.add_column(k, None, "DATETIME", True)
-				else:
-					new_table.add_column(k, None, "VARCHAR(50)", True)
-			elif type(v) is int:
-				# if it's an int, then check if it's an id
-				if "_Id" in k:
-					# check that the table exists, and it's not just a naming coincident
-					for j in self.tables:
-						if j.name == k[:-3]:
-							new_table.add_column(k, j, "INTEGER", True)
-							new_table.add_pk(str(k))
-							new_table.json_id = True
-				else:
-					new_table.add_column(k, None, "INTEGER", True)
-			elif type(v) is bool:
-				# boolean
-				new_table.add_column(k, None, "BOOLEAN", True)
-			elif type(v) is float:
-				# decimal
-				new_table.add_column(k, None, "DECIMAL(5, 2)", True)
+				elif type(v) is str:
+					# if it is a string, then it is either a datetime or a varchar
+					pat = "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+					if re.search(pat, v):
+						new_table.add_column(k, None, "DATETIME", True)
+					else:
+						new_table.add_column(k, None, "VARCHAR(50)", True)
+				elif type(v) is int:
+					# if it's an int, then check if it's an id
+					if "_Id" in k:
+						# check that the table exists, and it's not just a naming coincident
+						for j in self.tables:
+							if j.name == k[:-3]:
+								new_table.add_column(k, j, "INTEGER", True)
+								new_table.add_pk(str(k))
+								new_table.json_id = True
+					else:
+						new_table.add_column(k, None, "INTEGER", True)
+				elif type(v) is bool:
+					# boolean
+					new_table.add_column(k, None, "BOOLEAN", True)
+				elif type(v) is float:
+					# decimal
+					new_table.add_column(k, None, "DECIMAL(5, 2)", True)
 
-		if not new_table.json_id :
-			new_table.add_column("Id", None, "INTEGER", False)
+			if not new_table.json_id :
+				new_table.add_column("Id", None, "INTEGER", False)
 
-		return new_table
+			return new_table
 
-	def get_json(self, keys:list, i:int=0, start_json=None):
+		if len(self.jsonObj) > 0 and len(str(self.db)) > 0:
+			# call recursive loop
+			find_tables(start_json, parent)
+			# reset depth and return tables
+			self.depth = 0
+			return self.tables
+		else:
+			return []
+
+	def get_json(self, keys:list, i:int=0, start_json=None) -> str:
+		# check for maximum recursive depth
+		self.depth += 1
+		if self.depth > self.ALLOWED_DEPTH:
+			self.depth = 0
+			return ""
 		# get or set json object
 		json_obj = start_json
 		if json_obj is None:
@@ -219,30 +264,55 @@ class JsonParser:
 			return self.get_json(keys, i=i+1, start_json=json_obj[keys[i]])
 		else:
 			# since this is the last key, just return the value
+			self.depth = 0
 			return json_obj[keys[i]]
 
-	def get_table(self, table_name:str):
+	def get_table(self, table_name:str) -> str:
 		for table_i in self.tables:
 			if table_i.name == table_name:
 				return table_i.create_sql()
 
 		return "NOT FOUND"
 
-	def execute_sql(self, sql):
-		# Connect to MySQL
-		conn = mysql.connector.connect(
-			host="localhost",
-			port=3306,
-			user="root",
-			password="root",
-			database=self.db
-		)
-		cursor = conn.cursor()
+	def execute_sql(self, sql:str) -> None:
+		if len(self.jsonObj) > 0 and len(str(self.db)) > 0:
+			# Connect to MySQL
+			conn = mysql.connector.connect(
+				host="localhost",
+				port=3306,
+				user="root",
+				password="root",
+				database=self.db
+			)
+			cursor = conn.cursor()
 
-		cursor.execute(sql)
-		conn.commit()
-		cursor.close()
-		conn.close()
+			cursor.execute(sql)
+			conn.commit()
+			cursor.close()
+			conn.close()
+		else:
+			raise DatabaseError("Data Path or Database Name not specified")
+
+	def read_json(self) -> None:
+		with open(self.datapath, "r") as file:
+			whole_json = json.load(file)
+			self.jsonObj = whole_json
+
+	def set_db_name(self, name:str) -> None:
+		self.db = name
+
+	def set_data_path(self, path:str) -> None:
+		self.datapath = path
+
+	def set_max_recursion(self, max:int) -> None:
+		self.ALLOWED_DEPTH = max
+
+	def save_config(self) -> None:
+		self.json_config["recursive_depth"] = self.ALLOWED_DEPTH
+		self.json_config["data_path"] = self.datapath
+		self.json_config["database_name"] = self.db
+		with open("config.json", "w") as file:
+			file.write(json.dumps(self.json_config))
 
 class CLI(cmd.Cmd):
 	intro = (
@@ -266,18 +336,15 @@ class CLI(cmd.Cmd):
 
 	def __init__(self):
 		super().__init__()
-		self.tasks = []
 		self.sql = []
-		self.json_path = ""
-		self.database = None
-		self.database_name = ""
+		self.database = JsonParser()
 
 		self.color = Color()
 		self.color.new_color("prompt", 0, 191, 0)
 		self.color.new_color("error", 200, 20, 0)
 		self.color.new_color("header", bg_red=0, bg_green=0, bg_blue=0)
 
-		self.prompt = f"\n{self.color.get_color("prompt")}JSON_PARSER (no db selected) :{self.color.neutral} "
+		self.prompt = f"\n{self.color.get_color("prompt")}JSON_PARSER `{self.database.db}` :{self.color.neutral} "
 
 	def do_help(self, arg: str):
 		if "?" in arg:
@@ -291,28 +358,31 @@ class CLI(cmd.Cmd):
 		print(r"|| = or")
 		print(r"?? = optional")
 		print()
-		print(self.color.get_color("header") + r"COMMAND                                     ║  DESCRIPTION                                                           " + self.color.neutral)
-		print(r"help                                        ║  lists all commands and their descriptions")
-		print(r"set [--db-name 'name']?? [--json 'path']??  ║  set the databases name or the datapath")
-		print(r"read [json || 'path']                       ║  read data from data/data.json or specified path (must be json file)")
-		print(r"sql [create || fill]                        ║  generate the 'create table' sql or the 'insert' sql and save to memory")
-		print(r"sql memory                                  ║  show what is in the sql memory")
-		print(r"sql execute                                 ║  execute the sql that is in memory")
-		print(r"quit                                        ║  exit JSON PARSER")
-		print(r"'your command' ?                            ║  give a more complete description about the command")
+		print(self.color.get_color("header") + r"COMMAND                             ║  DESCRIPTION                                                           " + self.color.neutral)
+		print(r"help                               ║  lists all commands and their descriptions")
+		print(r"set [--db-name 'name']             ║  set the databases name")
+		print(r"set [--json 'path']                ║  set the datapath")
+		print(r"set [--recursion-depth 'integer']  ║  set the maximum number of recursive loops")
+		print(r"read [json || 'path']              ║  read data from data/data.json or specified path (must be json file)")
+		print(r"sql [create || fill]               ║  generate the 'create table' sql or the 'insert' sql and save to memory")
+		print(r"sql memory                         ║  show what is in the sql memory")
+		print(r"sql execute                        ║  execute the sql that is in memory")
+		print(r"quit                               ║  exit JSON PARSER")
+		print(r"'your command' ?                   ║  give a more complete description about the command")
 		print()
 		print(self.color.get_color("header") + r"JSON PARSER: created by sswagger" + self.color.neutral)
 
 	def do_set(self, arg: str):
 		if "?" in arg:
 			print(self.color.get_color("header") + "`set` command:" + self.color.neutral)
-			print("\t`set [--db-name 'name']?? [--json 'path']??`")
+			print("\t`set [--db-name 'name']?? [--json 'path']?? [--recursion-depth 'integer']??`")
 			print("\tThis command will set the databases name or datapath for future commands")
 			print("\tIf both are set then it will automatically read the data")
 			return
 		parser = argparse.ArgumentParser(prog="setdb", add_help=False)
 		parser.add_argument("--db-name", required=False)
 		parser.add_argument("--json", required=False)
+		parser.add_argument("--recursion-depth", required=False)
 
 		try:
 			args = parser.parse_args(shlex.split(arg))
@@ -320,15 +390,30 @@ class CLI(cmd.Cmd):
 			return
 
 		if args.db_name:
-			self.database_name = args.db_name
+			self.database.db = args.db_name
 			self.prompt = f"\n{self.color.get_color("prompt")}JSON_PARSER `{args.db_name}` :{self.color.neutral} "
 			print(f"Database name set to {args.db_name}")
 		if args.json:
-			self.json_path = args.json
+			self.database.datapath = args.json
 			print(f"Json Path set to {args.json}")
-		if self.database_name and self.json_path:
-			print()
-			self.do_read(self.json_path)
+		if args.recursion_depth:
+			self.database.ALLOWED_DEPTH = int(args.recursion_depth)
+			print(f"Recursive limit set to {args.recursion_depth}")
+
+	def do_get(self, arg: str):
+		match arg:
+			case "json":
+				print(f"Json Path: {self.database.datapath}")
+			case "dbname":
+				print(f"Database Name: {self.database.db}")
+			case "recursion-depth":
+				print(f"Recursion Depth Limit: {self.database.ALLOWED_DEPTH}")
+			case "sql":
+				print(f"In-Memory SQL: run `sql memory`")
+			case _:
+				print(f"Json Path: {self.database.datapath}")
+				print(f"Database Name: {self.database.db}")
+				print(f"Recursion Depth Limit: {self.database.ALLOWED_DEPTH}")
 
 	def do_read(self, arg: str="json"):
 		if "?" in arg:
@@ -336,19 +421,15 @@ class CLI(cmd.Cmd):
 			print("\t`read [json || 'path']`")
 			print("\tThis command will read the data from the database")
 			print("\tIf both are set then it will automatically read the data")
-		if arg == "json":
-			self.json_path = "data/data.json"
-		else:
-			self.json_path = arg
+			return
 
-		if self.database_name != "":
-			print(f"reading json from {self.json_path}...")
-			time.sleep(1)
-			self.database = JsonParser(self.database_name, self.json_path)
+		try:
+			print(f"reading json from {self.database.datapath}...")
+			self.database.read_json()
 			print(f"JSON successfully read!")
-		else:
-			print(f"{self.color.get_color("error")}ERROR: in command `read {self.json_path}`{self.color.neutral}")
-			print("No database selected\n\tTo resolve this run `set --db-name 'your-database-name'`, or type `help` for docs")
+		except FileNotFoundError:
+			print(f"{self.color.get_color("error")}ERROR: in command `read {arg}`{self.color.neutral}")
+			print("File not found\n\tTo resolve this run `set --json 'path'`, or type `help` for docs")
 
 	def do_sql(self, arg: str):
 		if "?" in arg:
@@ -358,6 +439,7 @@ class CLI(cmd.Cmd):
 			print("\t`sql fill`: generate the 'fill table' sql and save to memory")
 			print("\t`sql memory`: read sql in memory")
 			print("\t`sql execute`: run the sql that is in memory")
+			return
 
 		match arg:
 			case "create":
@@ -410,9 +492,11 @@ class CLI(cmd.Cmd):
 			print(self.color.get_color("header") + "`quit` command:" + self.color.neutral)
 			print("\tQuit from JSON PARSER")
 			print("\tAll sql in memory will be lost")
+			return False
 		confirm = input("Confirm quit? [y]es/[N]o : ")
 
 		if "y" in confirm.lower():
+			self.database.save_config()
 			return True
 		return False
 
