@@ -9,6 +9,7 @@ from model.color import Color
 import shlex
 import argparse
 
+# TODO: Separate JSON PARSER and mcp tool into their own repos
 # TODO: allow user the ability to create a database
 #=== jsonParser class ===#
 class JsonParser:
